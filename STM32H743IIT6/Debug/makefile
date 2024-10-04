@@ -60,8 +60,8 @@ all: main-build
 main-build: STM32H743IIT6.elf secondary-outputs
 
 # Tool invocations
-STM32H743IIT6.elf STM32H743IIT6.map: $(OBJS) $(USER_OBJS) D:\OneDrive\ -\ Bangkok\ Expressway\ Plc\67\ -\ Project\2024\ -\ Rattana\ Eng\00-STM32\STM32H743IIT6\STM32H743IITX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "STM32H743IIT6.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m7 -T"D:\OneDrive - Bangkok Expressway Plc\67 - Project\2024 - Rattana Eng\00-STM32\STM32H743IIT6\STM32H743IITX_FLASH.ld" --specs=nosys.specs -Wl,-Map="STM32H743IIT6.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+STM32H743IIT6.elf STM32H743IIT6.map: $(OBJS) $(USER_OBJS) D:\OneDrive\ -\ Bangkok\ Expressway\ Plc\67\ -\ Project\2024\ -\ EdgeByte\2024\00-GIT\medicalCartSTM32\STM32H743IIT6\STM32H743IITX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "STM32H743IIT6.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m7 -T"D:\OneDrive - Bangkok Expressway Plc\67 - Project\2024 - EdgeByte\2024\00-GIT\medicalCartSTM32\STM32H743IIT6\STM32H743IITX_FLASH.ld" --specs=nosys.specs -Wl,-Map="STM32H743IIT6.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
