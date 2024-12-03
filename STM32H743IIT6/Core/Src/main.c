@@ -18,6 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
+#include "dht22.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -40,14 +42,36 @@
 
 /* Private variables ---------------------------------------------------------*/
 
+SPI_HandleTypeDef hspi1;
+SPI_HandleTypeDef hspi5;
+
 UART_HandleTypeDef huart4;
 UART_HandleTypeDef huart6;
-
+DHT22_Data_t sensorData;
+/* Definitions for defaultTask */
+osThreadId_t defaultTaskHandle;
+const osThreadAttr_t defaultTask_attributes = { .name = "defaultTask",
+		.stack_size = 128 * 4, .priority = (osPriority_t) osPriorityNormal, };
+/* Definitions for buzzerTask */
+osThreadId_t buzzerTaskHandle;
+const osThreadAttr_t buzzerTask_attributes = { .name = "buzzerTask",
+		.stack_size = 128 * 4, .priority = (osPriority_t) osPriorityLow, };
 /* USER CODE BEGIN PV */
-int timeDelay = 300;
+int timeDelay = 1;
 int solenoidTimeDelay = 300;
+uint8_t add1[1];
+uint8_t add2[1];
+uint8_t add3[1];
+uint8_t add4[1];
+uint8_t address[1];
+uint8_t buzzerStatus[1];
+uint8_t pinStatus[10] = { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+		0x39 };
 uint8_t solenoidStatus[10] = { };
 uint8_t play[6] = { 0x41, 0x42, 0x43, 0x44, 0x45, 0x46 };
+uint8_t rxBuffer[8];
+uint8_t txBuffer[15] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x03 };
 
 /* USER CODE END PV */
 
@@ -57,6 +81,17 @@ static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_UART4_Init(void);
 static void MX_USART6_UART_Init(void);
+static void MX_SPI1_Init(void);
+static void MX_SPI5_Init(void);
+void StartDefaultTask(void *argument);
+void StartTask02(void *argument);
+void solenoidControl(uint8_t solenoidNo);
+void readLockStatus();
+void replyProtocol();
+uint8_t checkSum();
+uint8_t checkSumReply();
+uint8_t readAddress();
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -71,7 +106,11 @@ static void MX_USART6_UART_Init(void);
  * @retval int
  */
 int main(void) {
-
+	HAL_Init();
+	SystemClock_Config();
+	MX_GPIO_Init();
+	DHT22_Init();
+	//MX_TIM1_Init(); // Initialize TIM1 for microsecond delay
 	/* USER CODE BEGIN 1 */
 
 	/* USER CODE END 1 */
@@ -98,9 +137,51 @@ int main(void) {
 	MX_GPIO_Init();
 	MX_UART4_Init();
 	MX_USART6_UART_Init();
+	MX_SPI1_Init();
+	MX_SPI5_Init();
 	/* USER CODE BEGIN 2 */
 
 	/* USER CODE END 2 */
+
+	/* Init scheduler */
+	osKernelInitialize();
+
+	/* USER CODE BEGIN RTOS_MUTEX */
+	/* add mutexes, ... */
+	/* USER CODE END RTOS_MUTEX */
+
+	/* USER CODE BEGIN RTOS_SEMAPHORES */
+	/* add semaphores, ... */
+	/* USER CODE END RTOS_SEMAPHORES */
+
+	/* USER CODE BEGIN RTOS_TIMERS */
+	/* start timers, add new ones, ... */
+	/* USER CODE END RTOS_TIMERS */
+
+	/* USER CODE BEGIN RTOS_QUEUES */
+	/* add queues, ... */
+	/* USER CODE END RTOS_QUEUES */
+
+	/* Create the thread(s) */
+	/* creation of defaultTask */
+	defaultTaskHandle = osThreadNew(StartDefaultTask, NULL,
+			&defaultTask_attributes);
+
+	/* creation of buzzerTask */
+	buzzerTaskHandle = osThreadNew(StartTask02, NULL, &buzzerTask_attributes);
+
+	/* USER CODE BEGIN RTOS_THREADS */
+	/* add threads, ... */
+	/* USER CODE END RTOS_THREADS */
+
+	/* USER CODE BEGIN RTOS_EVENTS */
+	/* add events, ... */
+	/* USER CODE END RTOS_EVENTS */
+	vTaskSuspend(buzzerTaskHandle);
+	/* Start scheduler */
+	osKernelStart();
+
+	/* We should never get here as control is now taken by the scheduler */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
@@ -108,8 +189,6 @@ int main(void) {
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
-		HAL_UART_Transmit(&huart4, (uint8_t*) play, 6, 1000);
-
 	}
 	/* USER CODE END 3 */
 }
@@ -175,6 +254,102 @@ void SystemClock_Config(void) {
 	if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) {
 		Error_Handler();
 	}
+}
+
+/**
+ * @brief SPI1 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_SPI1_Init(void) {
+
+	/* USER CODE BEGIN SPI1_Init 0 */
+
+	/* USER CODE END SPI1_Init 0 */
+
+	/* USER CODE BEGIN SPI1_Init 1 */
+
+	/* USER CODE END SPI1_Init 1 */
+	/* SPI1 parameter configuration*/
+	hspi1.Instance = SPI1;
+	hspi1.Init.Mode = SPI_MODE_MASTER;
+	hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+	hspi1.Init.DataSize = SPI_DATASIZE_4BIT;
+	hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+	hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+	hspi1.Init.NSS = SPI_NSS_SOFT;
+	hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+	hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+	hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+	hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+	hspi1.Init.CRCPolynomial = 0x0;
+	hspi1.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+	hspi1.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
+	hspi1.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
+	hspi1.Init.TxCRCInitializationPattern =
+	SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
+	hspi1.Init.RxCRCInitializationPattern =
+	SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
+	hspi1.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
+	hspi1.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
+	hspi1.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
+	hspi1.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_DISABLE;
+	hspi1.Init.IOSwap = SPI_IO_SWAP_DISABLE;
+	if (HAL_SPI_Init(&hspi1) != HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN SPI1_Init 2 */
+
+	/* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+ * @brief SPI5 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_SPI5_Init(void) {
+
+	/* USER CODE BEGIN SPI5_Init 0 */
+
+	/* USER CODE END SPI5_Init 0 */
+
+	/* USER CODE BEGIN SPI5_Init 1 */
+
+	/* USER CODE END SPI5_Init 1 */
+	/* SPI5 parameter configuration*/
+	hspi5.Instance = SPI5;
+	hspi5.Init.Mode = SPI_MODE_MASTER;
+	hspi5.Init.Direction = SPI_DIRECTION_2LINES;
+	hspi5.Init.DataSize = SPI_DATASIZE_4BIT;
+	hspi5.Init.CLKPolarity = SPI_POLARITY_LOW;
+	hspi5.Init.CLKPhase = SPI_PHASE_1EDGE;
+	hspi5.Init.NSS = SPI_NSS_SOFT;
+	hspi5.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+	hspi5.Init.FirstBit = SPI_FIRSTBIT_MSB;
+	hspi5.Init.TIMode = SPI_TIMODE_DISABLE;
+	hspi5.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+	hspi5.Init.CRCPolynomial = 0x0;
+	hspi5.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+	hspi5.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
+	hspi5.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
+	hspi5.Init.TxCRCInitializationPattern =
+	SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
+	hspi5.Init.RxCRCInitializationPattern =
+	SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
+	hspi5.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
+	hspi5.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
+	hspi5.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
+	hspi5.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_DISABLE;
+	hspi5.Init.IOSwap = SPI_IO_SWAP_DISABLE;
+	if (HAL_SPI_Init(&hspi5) != HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN SPI5_Init 2 */
+
+	/* USER CODE END SPI5_Init 2 */
+
 }
 
 /**
@@ -282,10 +457,10 @@ static void MX_GPIO_Init(void) {
 	__HAL_RCC_GPIOC_CLK_ENABLE();
 	__HAL_RCC_GPIOF_CLK_ENABLE();
 	__HAL_RCC_GPIOH_CLK_ENABLE();
+	__HAL_RCC_GPIOA_CLK_ENABLE();
 	__HAL_RCC_GPIOB_CLK_ENABLE();
 	__HAL_RCC_GPIOD_CLK_ENABLE();
 	__HAL_RCC_GPIOG_CLK_ENABLE();
-	__HAL_RCC_GPIOA_CLK_ENABLE();
 
 	/*Configure GPIO pin Output Level */
 	HAL_GPIO_WritePin(GPIOH, S06_Pin | LED06_Pin | S05_Pin | LED05_Pin,
@@ -311,14 +486,6 @@ static void MX_GPIO_Init(void) {
 	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
 	GPIO_InitStruct.Pull = GPIO_NOPULL;
 	HAL_GPIO_Init(DHT22_GPIO_Port, &GPIO_InitStruct);
-
-	/*Configure GPIO pins : PF6 PF7 PF8 PF9 */
-	GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7 | GPIO_PIN_8 | GPIO_PIN_9;
-	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-	GPIO_InitStruct.Pull = GPIO_NOPULL;
-	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-	GPIO_InitStruct.Alternate = GPIO_AF5_SPI5;
-	HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
 	/*Configure GPIO pins : S06_Pin LED06_Pin S05_Pin LED05_Pin */
 	GPIO_InitStruct.Pin = S06_Pin | LED06_Pin | S05_Pin | LED05_Pin;
@@ -377,6 +544,233 @@ static void MX_GPIO_Init(void) {
 
 /* USER CODE END 4 */
 
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+ * @brief  Function implementing the defaultTask thread.
+ * @param  argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void *argument) {
+	/* USER CODE BEGIN 5 */
+	/* Infinite loop */
+	for (;;) {
+		if (HAL_UART_Receive(&huart4, rxBuffer, 8, 10) == HAL_OK) {
+			// Data received successfully, transmit it back
+			//HAL_GPIO_WritePin(S01_GPIO_Port, S01_Pin, 1);
+			//HAL_UART_Transmit(&huart4, (uint8_t*) rxBuffer, 8, 10);
+			if (rxBuffer[6] == checkSum() && rxBuffer[1] == 0x01) {
+				//Control
+				if (rxBuffer[2] == 0x43) {
+					//Control Buzzer
+					if (rxBuffer[3] == 0x42) {
+						if (rxBuffer[5] == 0x31) {
+							vTaskResume(buzzerTaskHandle);
+							buzzerStatus[0] = 0x31;
+						}
+						if (rxBuffer[5] == 0x30) {
+							vTaskSuspend(buzzerTaskHandle);
+							HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin,
+									GPIO_PIN_RESET);
+							buzzerStatus[0] = 0x30;
+						}
+
+					}
+					//Control Solenoid
+					if (rxBuffer[3] == 0x53) {
+						solenoidControl(rxBuffer[4]);
+						replyProtocol();
+					}
+				}
+				//Read
+				if (rxBuffer[2] == 0x52) {
+					//Buzzer
+					if (rxBuffer[3] == 0x42) {
+
+					}
+					//Humid
+					if (rxBuffer[3] == 0x48) {
+
+					}
+					//Solenoid
+					if (rxBuffer[3] == 0x53) {
+
+					}
+					//Temp
+					if (rxBuffer[3] == 0x54) {
+
+					}
+
+				}
+				if (rxBuffer[2] == 0x43) {
+					//pinStatusCheck();
+					//checkSumProtocol();
+					//add1[0] = readAddress();
+					//HAL_UART_Transmit(&huart4, (uint8_t*) "TEST", 4, 10);
+					//HAL_UART_Transmit(&huart4, (uint8_t*) pinStatus, 10, 10);
+					//HAL_UART_Transmit(&huart4, (uint8_t*) address, 1, 10);
+				}
+				//HAL_UART_Transmit(&huart4, (uint8_t*) play, 8, 10);
+			}
+		}
+		osDelay(1);
+	}
+
+	/* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartTask02 */
+/**
+ * @brief Function implementing the myTask02 thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_StartTask02 */
+void StartTask02(void *argument) {
+	/* USER CODE BEGIN StartTask02 */
+	/* Infinite loop */
+	for (;;) {
+		HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
+		osDelay(500);
+		HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
+		osDelay(500);
+	}
+	/* USER CODE END StartTask02 */
+}
+
+void readLockStatus() {
+	solenoidStatus[0] = (
+			(HAL_GPIO_ReadPin(LOCK01_GPIO_Port, LOCK01_Pin) == GPIO_PIN_SET) ?
+					0x31 : 0x30);
+	solenoidStatus[1] = (
+			(HAL_GPIO_ReadPin(LOCK02_GPIO_Port, LOCK02_Pin) == GPIO_PIN_SET) ?
+					0x31 : 0x30);
+	solenoidStatus[2] = (
+			(HAL_GPIO_ReadPin(LOCK03_GPIO_Port, LOCK03_Pin) == GPIO_PIN_SET) ?
+					0x31 : 0x30);
+	solenoidStatus[3] = (
+			(HAL_GPIO_ReadPin(LOCK04_GPIO_Port, LOCK04_Pin) == GPIO_PIN_SET) ?
+					0x31 : 0x30);
+	solenoidStatus[4] = (
+			(HAL_GPIO_ReadPin(LOCK05_GPIO_Port, LOCK05_Pin) == GPIO_PIN_SET) ?
+					0x31 : 0x30);
+	solenoidStatus[5] = (
+			(HAL_GPIO_ReadPin(LOCK06_GPIO_Port, LOCK06_Pin) == GPIO_PIN_SET) ?
+					0x31 : 0x30);
+	solenoidStatus[6] = (
+			(HAL_GPIO_ReadPin(LOCK07_GPIO_Port, LOCK07_Pin) == GPIO_PIN_SET) ?
+					0x31 : 0x30);
+	solenoidStatus[7] = (
+			(HAL_GPIO_ReadPin(LOCK08_GPIO_Port, LOCK08_Pin) == GPIO_PIN_SET) ?
+					0x31 : 0x30);
+	solenoidStatus[8] = (
+			(HAL_GPIO_ReadPin(LOCK09_GPIO_Port, LOCK09_Pin) == GPIO_PIN_SET) ?
+					0x31 : 0x30);
+	solenoidStatus[9] = (
+			(HAL_GPIO_ReadPin(LOCK10_GPIO_Port, LOCK10_Pin) == GPIO_PIN_SET) ?
+					0x31 : 0x30);
+}
+
+void replyProtocol() {
+	txBuffer[0] = 0x02;
+	txBuffer[1] = readAddress();
+	txBuffer[2] = rxBuffer[2];
+	readLockStatus();
+	txBuffer[3] = solenoidStatus[0];
+	if (txBuffer[2] == 0x42) {
+		txBuffer[3] = buzzerStatus[0];
+	}
+	txBuffer[4] = solenoidStatus[1];
+	txBuffer[5] = solenoidStatus[2];
+	txBuffer[6] = solenoidStatus[3];
+	txBuffer[7] = solenoidStatus[4];
+	txBuffer[8] = solenoidStatus[5];
+	txBuffer[9] = solenoidStatus[6];
+	txBuffer[10] = solenoidStatus[7];
+	txBuffer[11] = solenoidStatus[8];
+	txBuffer[12] = solenoidStatus[9];
+	txBuffer[13] = checkSum();
+	txBuffer[14] = 0x03;
+	HAL_UART_Transmit(&huart4, (uint8_t*) txBuffer, sizeof(txBuffer), 10);
+}
+
+uint8_t checkSum() {
+	return (rxBuffer[1] ^ rxBuffer[2] ^ rxBuffer[3] ^ rxBuffer[4] ^ rxBuffer[5]);
+}
+uint8_t readAddress() {
+	address[0] = 0x00;
+	address[0] |= (HAL_GPIO_ReadPin(ADD1_GPIO_Port, ADD1_Pin) == GPIO_PIN_SET)
+			<< 0;
+	address[0] |= (HAL_GPIO_ReadPin(ADD2_GPIO_Port, ADD2_Pin) == GPIO_PIN_SET)
+			<< 1;
+	address[0] |= (HAL_GPIO_ReadPin(ADD3_GPIO_Port, ADD3_Pin) == GPIO_PIN_SET)
+			<< 2;
+	address[0] |= (HAL_GPIO_ReadPin(ADD4_GPIO_Port, ADD4_Pin) == GPIO_PIN_SET)
+			<< 3;
+	return address[0];
+}
+uint8_t checkSumReply() {
+	return (txBuffer[1] ^ txBuffer[2] ^ txBuffer[3] ^ txBuffer[4] ^ txBuffer[5]
+			^ txBuffer[6] ^ txBuffer[7] ^ txBuffer[8] ^ txBuffer[9]
+			^ txBuffer[10] ^ txBuffer[11] ^ txBuffer[12]);
+}
+
+void solenoidControl(uint8_t solenoidNo) {
+	switch (solenoidNo) {
+	case 0x31:
+		HAL_GPIO_WritePin(S01_GPIO_Port, S01_Pin, GPIO_PIN_SET);
+		osDelay(solenoidTimeDelay);
+		HAL_GPIO_WritePin(S01_GPIO_Port, S01_Pin, GPIO_PIN_RESET);
+		break;
+	case 0x32:
+		HAL_GPIO_WritePin(S02_GPIO_Port, S02_Pin, GPIO_PIN_SET);
+		osDelay(solenoidTimeDelay);
+		HAL_GPIO_WritePin(S02_GPIO_Port, S02_Pin, GPIO_PIN_RESET);
+		break;
+	case 0x33:
+		HAL_GPIO_WritePin(S03_GPIO_Port, S03_Pin, GPIO_PIN_SET);
+		osDelay(solenoidTimeDelay);
+		HAL_GPIO_WritePin(S03_GPIO_Port, S03_Pin, GPIO_PIN_RESET);
+		break;
+	case 0x34:
+		HAL_GPIO_WritePin(S04_GPIO_Port, S04_Pin, GPIO_PIN_SET);
+		osDelay(solenoidTimeDelay);
+		HAL_GPIO_WritePin(S04_GPIO_Port, S04_Pin, GPIO_PIN_RESET);
+		break;
+	case 0x35:
+		HAL_GPIO_WritePin(S05_GPIO_Port, S05_Pin, GPIO_PIN_SET);
+		osDelay(solenoidTimeDelay);
+		HAL_GPIO_WritePin(S05_GPIO_Port, S05_Pin, GPIO_PIN_RESET);
+		break;
+	case 0x36:
+		HAL_GPIO_WritePin(S06_GPIO_Port, S06_Pin, GPIO_PIN_SET);
+		osDelay(solenoidTimeDelay);
+		HAL_GPIO_WritePin(S06_GPIO_Port, S06_Pin, GPIO_PIN_RESET);
+		break;
+	case 0x37:
+		HAL_GPIO_WritePin(S07_GPIO_Port, S07_Pin, GPIO_PIN_SET);
+		osDelay(solenoidTimeDelay);
+		HAL_GPIO_WritePin(S07_GPIO_Port, S07_Pin, GPIO_PIN_RESET);
+		break;
+	case 0x38:
+		HAL_GPIO_WritePin(S08_GPIO_Port, S08_Pin, GPIO_PIN_SET);
+		osDelay(solenoidTimeDelay);
+		HAL_GPIO_WritePin(S08_GPIO_Port, S08_Pin, GPIO_PIN_RESET);
+		break;
+	case 0x39:
+		HAL_GPIO_WritePin(S09_GPIO_Port, S09_Pin, GPIO_PIN_SET);
+		osDelay(solenoidTimeDelay);
+		HAL_GPIO_WritePin(S09_GPIO_Port, S09_Pin, GPIO_PIN_RESET);
+		break;
+	case 0x3A:
+		HAL_GPIO_WritePin(S10_GPIO_Port, S10_Pin, GPIO_PIN_SET);
+		osDelay(solenoidTimeDelay);
+		HAL_GPIO_WritePin(S10_GPIO_Port, S10_Pin, GPIO_PIN_RESET);
+		break;
+	}
+
+}
+
 /* MPU Configuration */
 
 void MPU_Config(void) {
@@ -402,126 +796,6 @@ void MPU_Config(void) {
 	HAL_MPU_ConfigRegion(&MPU_InitStruct);
 	/* Enables the MPU */
 	HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
-
-}
-
-//Sub Function
-void solenoidReadStatus() {
-	solenoidStatus[0] = HAL_GPIO_ReadPin(S01_GPIO_Port, S01_Pin);
-	solenoidStatus[1] = HAL_GPIO_ReadPin(S02_GPIO_Port, S02_Pin);
-	solenoidStatus[2] = HAL_GPIO_ReadPin(S03_GPIO_Port, S03_Pin);
-	solenoidStatus[3] = HAL_GPIO_ReadPin(S04_GPIO_Port, S04_Pin);
-	solenoidStatus[4] = HAL_GPIO_ReadPin(S05_GPIO_Port, S05_Pin);
-	solenoidStatus[5] = HAL_GPIO_ReadPin(S06_GPIO_Port, S06_Pin);
-	solenoidStatus[6] = HAL_GPIO_ReadPin(S07_GPIO_Port, S07_Pin);
-	solenoidStatus[7] = HAL_GPIO_ReadPin(S08_GPIO_Port, S08_Pin);
-	solenoidStatus[8] = HAL_GPIO_ReadPin(S09_GPIO_Port, S09_Pin);
-	solenoidStatus[9] = HAL_GPIO_ReadPin(S10_GPIO_Port, S10_Pin);
-}
-
-void solenoidController(uint8_t solenoidNo) {
-	switch (solenoidNo) {
-	case 0x31:
-		HAL_GPIO_WritePin(S01_GPIO_Port, S01_Pin, 1);
-		HAL_Delay(solenoidTimeDelay);
-		HAL_GPIO_WritePin(S01_GPIO_Port, S01_Pin, 0);
-		HAL_Delay(solenoidTimeDelay);
-		break;
-	case 0x32:
-		HAL_GPIO_WritePin(S02_GPIO_Port, S02_Pin, 1);
-		HAL_Delay(solenoidTimeDelay);
-		HAL_GPIO_WritePin(S02_GPIO_Port, S02_Pin, 0);
-		HAL_Delay(solenoidTimeDelay);
-		break;
-	case 0x33:
-		HAL_GPIO_WritePin(S03_GPIO_Port, S03_Pin, 1);
-		HAL_Delay(solenoidTimeDelay);
-		HAL_GPIO_WritePin(S03_GPIO_Port, S03_Pin, 0);
-		HAL_Delay(solenoidTimeDelay);
-		break;
-	case 0x34:
-		HAL_GPIO_WritePin(S04_GPIO_Port, S04_Pin, 1);
-		HAL_Delay(solenoidTimeDelay);
-		HAL_GPIO_WritePin(S04_GPIO_Port, S04_Pin, 0);
-		HAL_Delay(solenoidTimeDelay);
-		break;
-	case 0x35:
-		HAL_GPIO_WritePin(S05_GPIO_Port, S05_Pin, 1);
-		HAL_Delay(solenoidTimeDelay);
-		HAL_GPIO_WritePin(S05_GPIO_Port, S05_Pin, 0);
-		HAL_Delay(solenoidTimeDelay);
-		break;
-	case 0x36:
-		HAL_GPIO_WritePin(S06_GPIO_Port, S06_Pin, 1);
-		HAL_Delay(solenoidTimeDelay);
-		HAL_GPIO_WritePin(S06_GPIO_Port, S06_Pin, 0);
-		HAL_Delay(solenoidTimeDelay);
-		break;
-	case 0x37:
-		HAL_GPIO_WritePin(S07_GPIO_Port, S07_Pin, 1);
-		HAL_Delay(solenoidTimeDelay);
-		HAL_GPIO_WritePin(S07_GPIO_Port, S07_Pin, 0);
-		HAL_Delay(solenoidTimeDelay);
-		break;
-	case 0x38:
-		HAL_GPIO_WritePin(S08_GPIO_Port, S08_Pin, 1);
-		HAL_Delay(solenoidTimeDelay);
-		HAL_GPIO_WritePin(S08_GPIO_Port, S08_Pin, 0);
-		HAL_Delay(solenoidTimeDelay);
-		break;
-	case 0x39:
-		HAL_GPIO_WritePin(S09_GPIO_Port, S09_Pin, 1);
-		HAL_Delay(solenoidTimeDelay);
-		HAL_GPIO_WritePin(S09_GPIO_Port, S09_Pin, 0);
-		HAL_Delay(solenoidTimeDelay);
-		break;
-	case 0x3A:
-		HAL_GPIO_WritePin(S10_GPIO_Port, S10_Pin, 1);
-		HAL_Delay(solenoidTimeDelay);
-		HAL_GPIO_WritePin(S10_GPIO_Port, S10_Pin, 0);
-		HAL_Delay(solenoidTimeDelay);
-		break;
-	default:
-		break;
-	}
-}
-
-void ledStatusController(uint8_t ledNo, uint8_t ledStatus) {
-
-	switch (ledNo) {
-	case 0x31:
-		HAL_GPIO_WritePin(LED01_GPIO_Port, LED01_Pin, ledStatus);
-		break;
-	case 0x32:
-		HAL_GPIO_WritePin(LED02_GPIO_Port, LED02_Pin, ledStatus);
-		break;
-	case 0x33:
-		HAL_GPIO_WritePin(LED03_GPIO_Port, LED03_Pin, ledStatus);
-		break;
-	case 0x34:
-		HAL_GPIO_WritePin(LED04_GPIO_Port, LED04_Pin, ledStatus);
-		break;
-	case 0x35:
-		HAL_GPIO_WritePin(LED05_GPIO_Port, LED05_Pin, ledStatus);
-		break;
-	case 0x36:
-		HAL_GPIO_WritePin(LED06_GPIO_Port, LED06_Pin, ledStatus);
-		break;
-	case 0x37:
-		HAL_GPIO_WritePin(LED07_GPIO_Port, LED07_Pin, ledStatus);
-		break;
-	case 0x38:
-		HAL_GPIO_WritePin(LED08_GPIO_Port, LED08_Pin, ledStatus);
-		break;
-	case 0x39:
-		HAL_GPIO_WritePin(LED09_GPIO_Port, LED09_Pin, ledStatus);
-		break;
-	case 0x3A:
-		HAL_GPIO_WritePin(LED10_GPIO_Port, LED10_Pin, ledStatus);
-		break;
-	default:
-		break;
-	}
 
 }
 
